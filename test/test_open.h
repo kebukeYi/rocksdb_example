@@ -1,23 +1,23 @@
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
 #include <rocksdb/cache.h>
-#include <rocksdb/slice.h>
-#include <rocksdb/table.h>
+#include <rocksdb/db.h>
 #include <rocksdb/filter_policy.h>
+#include <rocksdb/options.h>
+#include <rocksdb/slice.h>
 #include <rocksdb/slice_transform.h>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <time.h>
-#include <thread>
-#include <cstdint>
-#include <chrono>
+#include <rocksdb/table.h>
 #include <stdlib.h>
-#include <random>
+#include <time.h>
+
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <iomanip>
+#include <iostream>
+#include <random>
 #include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
 
 using namespace std;
 using namespace rocksdb;
@@ -37,38 +37,41 @@ void TestOpen() {
     Status status = DB::Open(options, "../data/", &db);
     if (!status.ok()) {
         cout << "Open Error : " << status.ToString() << endl;
-        return ;
+        return;
     }
     cout << "Open Successful" << endl;
     string key("");
     string value("");
-    //写
+    // 写
     WriteOptions writeOptions;
     key = "key1";
     value = "value1";
     status = db->Put(writeOptions, "key1", "value1");
-    //读
+    // 读
     ReadOptions readOptions;
     value = "";
     status = db->Get(readOptions, key, &value);
     if (!status.ok()) {
-        cout << "read " << status.ToString() << ", key = " << key << " value = " << value << endl;
+        cout << "read " << status.ToString() << ", key = " << key
+             << " value = " << value << endl;
     }
-    cout << "read " << status.ToString() << ", key = " << key << " value = " << value << endl;
+    cout << "read " << status.ToString() << ", key = " << key
+         << " value = " << value << endl;
     key = "key2";
     value = "";
     status = db->Get(readOptions, key, &value);
     if (!status.ok()) {
-        cout << "read " << status.ToString() << ", key = " << key << " value = " << value << endl;
+        cout << "read " << status.ToString() << ", key = " << key
+             << " value = " << value << endl;
     }
     delete db;
-    return ;
-/*
-输出结果
-Open Successful
-read OK, key = key1 value = value1
-read NotFound: , key = key2 value = 
-*/
+    return;
+    /*
+    输出结果
+    Open Successful
+    read OK, key = key1 value = value1
+    read NotFound: , key = key2 value =
+    */
 }
 
 void TestOpenForReadOnly() {
@@ -80,25 +83,25 @@ void TestOpenForReadOnly() {
     Status s = DB::OpenForReadOnly(options, "../data/", &db);
     if (!s.ok()) {
         cout << "Open Error : " << s.ToString() << endl;
-        return ;
+        return;
     }
     WriteOptions writeOptions;
     s = db->Put(writeOptions, "keyxx", "valuexx");
-    cout << "Put keyxx result : "<< s.ToString() << endl;
+    cout << "Put keyxx result : " << s.ToString() << endl;
     ReadOptions read_options;
     string value("");
     s = db->Get(read_options, "keyxx", &value);
     cout << "Get keyxx result : " << s.ToString() << endl;
     delete db;
-    return ;
-/*
-输出结果
-Put keyxx result : Not implemented: Not supported operation in read only mode.
-Get keyxx result : NotFound: 
-*/
+    return;
+    /*
+    输出结果
+    Put keyxx result : Not implemented: Not supported operation in read only
+    mode. Get keyxx result : NotFound:
+    */
 }
 
-//主实例
+// 主实例
 void TestSecondary() {
     DB* db;
     DB* read_db;
@@ -108,12 +111,12 @@ void TestSecondary() {
     Status s = DB::Open(options, "../data/", &db);
     if (!s.ok()) {
         cout << "Open Error : " << s.ToString() << endl;
-        return ;
+        return;
     }
     WriteOptions writeOptions;
     cout << now_time() << " put key1-5" << endl;
     int i = 1;
-    for(; i <= 5; ++i) {
+    for (; i <= 5; ++i) {
         string key = "key" + to_string(i);
         string value = "value" + to_string(i);
         s = db->Put(writeOptions, key, value);
@@ -123,7 +126,7 @@ void TestSecondary() {
     this_thread::sleep_for(chrono::seconds(5));
 
     cout << now_time() << " put key6-10" << endl;
-    for(; i <= 10; ++i) {
+    for (; i <= 10; ++i) {
         string key = "key" + to_string(i);
         string value = "value" + to_string(i);
         s = db->Put(writeOptions, key, value);
@@ -133,12 +136,12 @@ void TestSecondary() {
     this_thread::sleep_for(chrono::seconds(5));
 
     cout << now_time() << " put key10-15" << endl;
-    for(; i <= 15; ++i) {
+    for (; i <= 15; ++i) {
         string key = "key" + to_string(i);
         string value = "value" + to_string(i);
         s = db->Put(writeOptions, key, value);
     }
     this_thread::sleep_for(chrono::seconds(120));
     delete db;
-    return ;
+    return;
 }
