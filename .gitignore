@@ -1,0 +1,99 @@
+# ==========================================
+# 1. 通用 C/C++ 编译产物
+# ==========================================
+# 预处理文件
+*.i
+*.ii
+*.d
+
+# 编译对象文件
+*.o
+*.obj
+*.slo
+*.lo
+*.ko
+
+# 静态库和动态库
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# 可执行文件
+*.exe
+*.out
+*.app
+*.bin
+
+# 调试符号
+*.pdb
+*.idb
+
+# ==========================================
+# 2. CMake 构建产物 (非常重要)
+# ==========================================
+# 忽略整个 build 目录（你的 cmake 构建在这里）
+/build/
+/cmake-build-*/
+
+# 忽略 CMake 生成的文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+install_manifest.txt
+
+# ==========================================
+# 3. RocksDB 源码编译产生的临时文件
+# ==========================================
+# 注意：如果你希望把 rocksdb 源码提交到你的仓库，请保留以下规则；
+# 如果你将 rocksdb 作为 git submodule，或者不想上传源码，可以直接忽略整个 /rocksdb/ 目录
+rocksdb/make_config.mk
+rocksdb/librocksdb.*
+rocksdb/*.o
+rocksdb/*.a
+rocksdb/*.so
+rocksdb/build_tools/*.o
+rocksdb/build_tools/*.a
+rocksdb/util/build_version.cc
+
+# ==========================================
+# 4. VS Code 配置文件
+# ==========================================
+# 这里有个小分歧：
+# 如果你是一个人做项目，建议忽略整个 .vscode，避免把本地的绝对路径提交上去
+/.vscode/
+
+# 如果你是和团队协作，希望共享调试配置，可以忽略上面的，改用下面这几行：
+# .vscode/*
+# !.vscode/settings.json
+# !.vscode/launch.json
+# !.vscode/tasks.json
+# !.vscode/c_cpp_properties.json
+
+# ==========================================
+# 5. 操作系统和编辑器生成的垃圾文件
+# ==========================================
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+.directory
+
+# JetBrains (CLion)
+.idea/
+
+# ==========================================
+# 6. 你的程序运行产生的数据 (根据你的代码设定)
+# ==========================================
+# 你代码里写的 DB::Open(options, "../data/", &db)
+/data/
