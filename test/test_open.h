@@ -34,6 +34,7 @@ void TestOpen() {
     DB* db;
     Options options;
     options.create_if_missing = true;
+    // 
     Status status = DB::Open(options, "../data/", &db);
     if (!status.ok()) {
         cout << "Open Error : " << status.ToString() << endl;
@@ -42,15 +43,17 @@ void TestOpen() {
     cout << "Open Successful" << endl;
     string key("");
     string value("");
-    // 写
+    // 写参数
     WriteOptions writeOptions;
     key = "key1";
     value = "value1";
+    // 
     status = db->Put(writeOptions, "key1", "value1");
     // 读
     ReadOptions readOptions;
     value = "";
     status = db->Get(readOptions, key, &value);
+    
     if (!status.ok()) {
         cout << "read " << status.ToString() << ", key = " << key
              << " value = " << value << endl;
@@ -59,6 +62,7 @@ void TestOpen() {
          << " value = " << value << endl;
     key = "key2";
     value = "";
+    // 
     status = db->Get(readOptions, key, &value);
     if (!status.ok()) {
         cout << "read " << status.ToString() << ", key = " << key

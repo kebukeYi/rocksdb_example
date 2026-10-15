@@ -1281,10 +1281,11 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   column_families.push_back(
       ColumnFamilyDescriptor(kDefaultColumnFamilyName, cf_options));
   if (db_options.persist_stats_to_disk) {
-    column_families.push_back(
-        ColumnFamilyDescriptor(kPersistentStatsColumnFamilyName, cf_options));
+    column_families.push_back(ColumnFamilyDescriptor(kPersistentStatsColumnFamilyName, cf_options));
   }
+  // 什么意思
   std::vector<ColumnFamilyHandle*> handles;
+  // 
   Status s = DB::Open(db_options, dbname, column_families, &handles, dbptr);
   if (s.ok()) {
     if (db_options.persist_stats_to_disk) {
@@ -1307,6 +1308,7 @@ Status DB::Open(const DBOptions& db_options, const std::string& dbname,
                 std::vector<ColumnFamilyHandle*>* handles, DB** dbptr) {
   const bool kSeqPerBatch = true;
   const bool kBatchPerTxn = true;
+  // 
   return DBImpl::Open(db_options, dbname, column_families, handles, dbptr,
                       !kSeqPerBatch, kBatchPerTxn);
 }
@@ -1356,6 +1358,7 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
                     const std::vector<ColumnFamilyDescriptor>& column_families,
                     std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
                     const bool seq_per_batch, const bool batch_per_txn) {
+  // 
   Status s = SanitizeOptionsByTable(db_options, column_families);
   if (!s.ok()) {
     return s;
@@ -1371,11 +1374,12 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
 
   size_t max_write_buffer_size = 0;
   for (auto cf : column_families) {
-    max_write_buffer_size =
-        std::max(max_write_buffer_size, cf.options.write_buffer_size);
+    max_write_buffer_size = std::max(max_write_buffer_size, cf.options.write_buffer_size);
   }
 
+  // 
   DBImpl* impl = new DBImpl(db_options, dbname, seq_per_batch, batch_per_txn);
+  // 
   s = impl->env_->CreateDirIfMissing(impl->immutable_db_options_.wal_dir);
   if (s.ok()) {
     std::vector<std::string> paths;
@@ -1417,12 +1421,15 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
   impl->mutex_.Lock();
   // Handles create_if_missing, error_if_exists
   uint64_t recovered_seq(kMaxSequenceNumber);
+  // 
   s = impl->Recover(column_families, false, false, false, &recovered_seq);
+  //
   if (s.ok()) {
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     log::Writer* new_log = nullptr;
-    const size_t preallocate_block_size =
-        impl->GetWalPreallocateBlockSize(max_write_buffer_size);
+    // 
+    const size_t preallocate_block_size = impl->GetWalPreallocateBlockSize(max_write_buffer_size);
+    // 
     s = impl->CreateWAL(new_log_number, 0 /*recycle_log_number*/,
                         preallocate_block_size, &new_log);
     if (s.ok()) {
@@ -1435,11 +1442,9 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     if (s.ok()) {
       // set column family handles
       for (auto cf : column_families) {
-        auto cfd =
-            impl->versions_->GetColumnFamilySet()->GetColumnFamily(cf.name);
+        auto cfd = impl->versions_->GetColumnFamilySet()->GetColumnFamily(cf.name);
         if (cfd != nullptr) {
-          handles->push_back(
-              new ColumnFamilyHandleImpl(cfd, impl, &impl->mutex_));
+          handles->push_back(new ColumnFamilyHandleImpl(cfd, impl, &impl->mutex_));
           impl->NewThreadStatusCfInfo(cfd);
         } else {
           if (db_options.create_missing_column_families) {
@@ -1460,11 +1465,12 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         }
       }
     }
+
+    // 
     if (s.ok()) {
       SuperVersionContext sv_context(/* create_superversion */ true);
       for (auto cfd : *impl->versions_->GetColumnFamilySet()) {
-        impl->InstallSuperVersionAndScheduleWork(
-            cfd, &sv_context, *cfd->GetLatestMutableCFOptions());
+        impl->InstallSuperVersionAndScheduleWork(cfd, &sv_context, *cfd->GetLatestMutableCFOptions());
       }
       sv_context.Clean();
       if (impl->two_write_queues_) {
@@ -1479,6 +1485,8 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       impl->DeleteObsoleteFiles();
       s = impl->directories_.GetDbDir()->Fsync();
     }
+
+    // 
     if (s.ok()) {
       // In WritePrepared there could be gap in sequence numbers. This breaks
       // the trick we use in kPointInTimeRecovery which assumes the first seq in
@@ -1506,6 +1514,8 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       }
     }
   }
+
+  //
   if (s.ok() && impl->immutable_db_options_.persist_stats_to_disk) {
     // try to read format version but no need to fail Open() even if it fails
     s = impl->PersistentStatsProcessFormatVersion();
@@ -1540,8 +1550,11 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       }
     }
   }
+
+  //
   TEST_SYNC_POINT("DBImpl::Open:Opened");
   Status persist_options_status;
+  // 
   if (s.ok()) {
     // Persist RocksDB Options before scheduling the compaction.
     // The WriteOptionsFile() will release and lock the mutex internally.
@@ -1635,9 +1648,11 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
           persist_options_status.ToString());
     }
   }
+  // 
   if (s.ok()) {
     impl->StartTimedTasks();
   }
+  // 
   if (!s.ok()) {
     for (auto* h : *handles) {
       delete h;

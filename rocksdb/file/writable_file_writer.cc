@@ -83,6 +83,7 @@ Status WritableFileWriter::Append(const Slice& data) {
   } else {
     // Writing directly to file bypassing the buffer
     assert(buf_.CurrentSize() == 0);
+    // 
     s = WriteBuffered(src, left);
   }
 
@@ -173,13 +174,14 @@ Status WritableFileWriter::Flush() {
       }
 #endif  // !ROCKSDB_LITE
     } else {
+      // 将数据加入到 wal 文件的 page cache 中;
       s = WriteBuffered(buf_.BufferStart(), buf_.CurrentSize());
     }
     if (!s.ok()) {
       return s;
     }
   }
-
+  // 将 wal 文件的 page cache 中的数据刷入到磁盘中;
   s = writable_file_->Flush(IOOptions(), nullptr);
 
   if (!s.ok()) {
@@ -307,6 +309,7 @@ Status WritableFileWriter::WriteBuffered(const char* data, size_t size) {
       {
         auto prev_perf_level = GetPerfLevel();
         IOSTATS_CPU_TIMER_GUARD(cpu_write_nanos, env_);
+        // 数据加入到 wal 文件中;
         s = writable_file_->Append(Slice(src, allowed), IOOptions(), nullptr);
         SetPerfLevel(prev_perf_level);
       }

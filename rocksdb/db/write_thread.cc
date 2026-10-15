@@ -41,6 +41,8 @@ uint8_t WriteThread::BlockingAwaitState(Writer* w, uint8_t goal_mask) {
 
   auto state = w->state.load(std::memory_order_acquire);
   assert(state != STATE_LOCKED_WAITING);
+  
+  // 双重检查
   if ((state & goal_mask) == 0 &&
       w->state.compare_exchange_strong(state, STATE_LOCKED_WAITING)) {
     // we have permission (and an obligation) to use StateMutex
@@ -59,8 +61,7 @@ uint8_t WriteThread::BlockingAwaitState(Writer* w, uint8_t goal_mask) {
   return state;
 }
 
-uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
-                                AdaptationContext* ctx) {
+uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask, AdaptationContext* ctx) {
   uint8_t state = 0;
 
   // 1. Busy loop using "pause" for 1 micro sec
@@ -71,11 +72,16 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
   // is the effect of the pause instruction), so 200 iterations is a bit
   // more than a microsecond.  This is long enough that waits longer than
   // this can amortize the cost of accessing the clock and yielding.
+  // 快路径: 
+  // 好处：如果对方马上改状态，这里几乎零开销拿到。
+  // 适用：等待时间极短（几微秒内）
   for (uint32_t tries = 0; tries < 200; ++tries) {
+    // 每次约 7ns，200 次约 1.4 微秒;
     state = w->state.load(std::memory_order_acquire);
     if ((state & goal_mask) != 0) {
       return state;
     }
+    // 不满足就执行 PAUSE，让出 CPU 流水线，降低功耗和总线争用
     port::AsmVolatilePause();
   }
 
@@ -139,6 +145,7 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
   // 1/sampling_base.
   const int sampling_base = 256;
 
+  // 中路径: yield + 时间控制（默认 100 微秒）
   if (max_yield_usec_ > 0) {
     update_ctx = Random::GetTLSInstance()->OneIn(sampling_base);
 
@@ -155,6 +162,7 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
       auto iter_begin = spin_begin;
       while ((iter_begin - spin_begin) <=
              std::chrono::microseconds(max_yield_usec_)) {
+        // 让出 CPU 时间片
         std::this_thread::yield();
 
         state = w->state.load(std::memory_order_acquire);
@@ -163,7 +171,7 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
           would_spin_again = true;
           break;
         }
-
+        // 检测 yield 是否“慢”（说明有竞争）
         auto now = std::chrono::steady_clock::now();
         if (now == iter_begin ||
             now - iter_begin >= std::chrono::microseconds(slow_yield_usec_)) {
@@ -174,6 +182,7 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
             // Not just one ivcsw, but several.  Immediately update yield_credit
             // and fall back to blocking
             update_ctx = true;
+            // 连续多次慢 yield，放弃自旋，改阻塞
             break;
           }
         }
@@ -182,8 +191,10 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
     }
   }
 
+  // 慢路径：阻塞等待（futex / condvar）
   if ((state & goal_mask) == 0) {
     TEST_SYNC_POINT_CALLBACK("WriteThread::AwaitState:BlockingWaiting", w);
+    // 
     state = BlockingAwaitState(w, goal_mask);
   }
 
@@ -209,20 +220,28 @@ uint8_t WriteThread::AwaitState(Writer* w, uint8_t goal_mask,
 
 void WriteThread::SetState(Writer* w, uint8_t new_state) {
   auto state = w->state.load(std::memory_order_acquire);
-  if (state == STATE_LOCKED_WAITING ||
-      !w->state.compare_exchange_strong(state, new_state)) {
+  // 如果当前状态不是 STATE_LOCKED_WAITING，直接 CAS 把状态改成 new_state
+  if (state == STATE_LOCKED_WAITING || !w->state.compare_exchange_strong(state, new_state)) {
+    // 失败 → 说明状态被改过，或者对方已经进入阻塞等待（STATE_LOCKED_WAITING）
+    // 慢路径：拿锁 + 改状态 + notify
     assert(state == STATE_LOCKED_WAITING);
-
     std::lock_guard<std::mutex> guard(w->StateMutex());
     assert(w->state.load(std::memory_order_relaxed) != new_state);
     w->state.store(new_state, std::memory_order_relaxed);
+    // 唤醒一个;
     w->StateCV().notify_one();
+  }else {
+    // 因为快路径下等待方没有阻塞在 condvar 上，它要么在 pause 自旋，要么在 yield，
+    // 都会不断重新读 w->state。所以只要状态改掉，它迟早会看到，不需要系统调用唤醒;
+    // 成功 → 不拿锁、不 notify，直接返回。等待方还在自旋或 yield，下一次读就能看到新状态;
   }
 }
 
 bool WriteThread::LinkOne(Writer* w, std::atomic<Writer*>* newest_writer) {
   assert(newest_writer != nullptr);
   assert(w->state == STATE_INIT);
+  // newest_writer 始终指向最新加入的 writer
+  // 每个新 writer 通过 link_older 指向它加入前的 newest_writer
   Writer* writers = newest_writer->load(std::memory_order_relaxed);
   while (true) {
     // If write stall in effect, and w->no_slowdown is not true,
@@ -247,6 +266,10 @@ bool WriteThread::LinkOne(Writer* w, std::atomic<Writer*>* newest_writer) {
         }
       }
     }
+    //input:  w1 -> w2 -> w3 -> w4
+    //output: w4  ->  w3  ->  w2  ->  w1  ->  nullptr
+    //        |
+    //   newest_writer_
     w->link_older = writers;
     if (newest_writer->compare_exchange_weak(writers, w)) {
       return (writers == nullptr);
@@ -254,8 +277,7 @@ bool WriteThread::LinkOne(Writer* w, std::atomic<Writer*>* newest_writer) {
   }
 }
 
-bool WriteThread::LinkGroup(WriteGroup& write_group,
-                            std::atomic<Writer*>* newest_writer) {
+bool WriteThread::LinkGroup(WriteGroup& write_group, std::atomic<Writer*>* newest_writer) {
   assert(newest_writer != nullptr);
   Writer* leader = write_group.leader;
   Writer* last_writer = write_group.last_writer;
@@ -272,6 +294,7 @@ bool WriteThread::LinkGroup(WriteGroup& write_group,
   }
   Writer* newest = newest_writer->load(std::memory_order_relaxed);
   while (true) {
+    // 把 write_group 的 leader 链接到 newest_writer_的后面, 等待成为 leader;
     leader->link_older = newest;
     if (newest_writer->compare_exchange_weak(newest, last_writer)) {
       return (newest == nullptr);
@@ -291,8 +314,7 @@ void WriteThread::CreateMissingNewerLinks(Writer* head) {
   }
 }
 
-WriteThread::Writer* WriteThread::FindNextLeader(Writer* from,
-                                                 Writer* boundary) {
+WriteThread::Writer* WriteThread::FindNextLeader(Writer* from, Writer* boundary) {
   assert(from != nullptr && from != boundary);
   Writer* current = from;
   while (current->link_older != boundary) {
@@ -370,10 +392,12 @@ void WriteThread::EndWriteStall() {
 }
 
 static WriteThread::AdaptationContext jbg_ctx("JoinBatchGroup");
+
 void WriteThread::JoinBatchGroup(Writer* w) {
   TEST_SYNC_POINT_CALLBACK("WriteThread::JoinBatchGroup:Start", w);
   assert(w->batch != nullptr);
 
+  // 判断当前新添加的 w 是否是 leader角色;
   bool linked_as_leader = LinkOne(w, &newest_writer_);
 
   if (linked_as_leader) {
@@ -397,6 +421,7 @@ void WriteThread::JoinBatchGroup(Writer* w) {
      *      writes in parallel.
      */
     TEST_SYNC_POINT_CALLBACK("WriteThread::JoinBatchGroup:BeganWaiting", w);
+    // 
     AwaitState(w, STATE_GROUP_LEADER | STATE_MEMTABLE_WRITER_LEADER |
                       STATE_PARALLEL_MEMTABLE_WRITER | STATE_COMPLETED,
                &jbg_ctx);
@@ -404,12 +429,12 @@ void WriteThread::JoinBatchGroup(Writer* w) {
   }
 }
 
-size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
-                                            WriteGroup* write_group) {
+size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,WriteGroup* write_group) {
+  // leader的 前置节点必须为 空;
   assert(leader->link_older == nullptr);
   assert(leader->batch != nullptr);
   assert(write_group != nullptr);
-
+  // 计算本次写入的 batch 的大小, 这个大小是所有 follower 的 batch 大小之和;
   size_t size = WriteBatchInternal::ByteSize(leader->batch);
 
   // Allow the group to grow up to a maximum size, but if the
@@ -425,6 +450,7 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
   write_group->leader = leader;
   write_group->last_writer = leader;
   write_group->size = 1;
+  // 快照, 也就说只拿到此刻的位置; 因为后面还会有新的 writer 加入, 但是这些新的 writer 不会被本次的 leader 处理;
   Writer* newest_writer = newest_writer_.load(std::memory_order_acquire);
 
   // This is safe regardless of any db mutex status of the caller. Previous
@@ -432,12 +458,18 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
   // (they emptied the list and then we added ourself as leader) or had to
   // explicitly wake us up (the list was non-empty when we added ourself,
   // so we have already received our MarkJoined).
+  // W1<-W2<-W3(newest_writer)<-W4<-W5(newest_writer_)
+  // W1<->W2<->W3(newest_writer)<- W4 <-W5(newest_writer_)
   CreateMissingNewerLinks(newest_writer);
 
   // Tricky. Iteration start (leader) is exclusive and finish
   // (newest_writer) is inclusive. Iteration goes from old to new.
   Writer* w = leader;
+  // 0. 把 leader -> newest_writer 全部节点都连接;
+  // 1. newest_writer 的快照点得位置,全部都在一个组中;
+  // 2. newest_writer 的快照点, 之前部分在一个组中;
   while (w != newest_writer) {
+    // 然后沿着 link_newer 往后看，把满足条件的 follower 一个个拉进当前组;
     w = w->link_newer;
 
     if (w->sync && !leader->sync) {
@@ -469,6 +501,7 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
     }
 
     auto batch_size = WriteBatchInternal::ByteSize(w->batch);
+
     if (size + batch_size > max_size) {
       // Do not make batch too big
       break;
@@ -476,9 +509,11 @@ size_t WriteThread::EnterAsBatchGroupLeader(Writer* leader,
 
     w->write_group = write_group;
     size += batch_size;
+    // 本组的最后一个 writer;
     write_group->last_writer = w;
     write_group->size++;
-  }
+  }// while over;
+
   TEST_SYNC_POINT_CALLBACK("WriteThread::EnterAsBatchGroupLeader:End", w);
   return size;
 }
@@ -614,27 +649,34 @@ void WriteThread::ExitAsBatchGroupFollower(Writer* w) {
 }
 
 static WriteThread::AdaptationContext eabgl_ctx("ExitAsBatchGroupLeader");
-void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
-                                         Status status) {
+void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group, Status status) {
+  // 本组的 leader;
   Writer* leader = write_group.leader;
+  // 本组的 末尾节点;
   Writer* last_writer = write_group.last_writer;
   assert(leader->link_older == nullptr);
 
   // Propagate memtable write error to the whole group.
+  // 将 memtable 写入错误广播到整个组;
   if (status.ok() && !write_group.status.ok()) {
     status = write_group.status;
   }
 
+  // 开启并行写入: memtable 和 wal 同时写;
   if (enable_pipelined_write_) {
     // Notify writers don't write to memtable to exit.
     for (Writer* w = last_writer; w != leader;) {
       Writer* next = w->link_older;
+      // 把结果, 从后往前遍历, 挨个赋值结果状态;
       w->status = status;
+      // 如果不需要写入 memtable, 就直接完成这个 follower 的工作;
       if (!w->ShouldWriteToMemtable()) {
         CompleteFollower(w, write_group);
       }
       w = next;
     }
+
+    // follower 们都已经完成了, leader 也不需要写入 memtable, 就直接完成 leader 的工作;
     if (!leader->ShouldWriteToMemtable()) {
       CompleteLeader(write_group);
     }
@@ -646,8 +688,10 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
     // so we know the boundary of the current write group.
     Writer dummy;
     Writer* expected = last_writer;
+    // 如果成功（has_dummy == true）, 说明当前组后面没有新 writer 加入;
     bool has_dummy = newest_writer_.compare_exchange_strong(expected, &dummy);
     if (!has_dummy) {
+      // 如果失败, 说明有新的 writer 在排队, expected 会被更新为当前最新的 newest_writer_ 值;
       // We find at least one pending writer when we insert dummy. We search
       // for next leader from there.
       next_leader = FindNextLeader(expected, last_writer);
@@ -660,8 +704,10 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
     // next leader or set newest_writer_ to null, otherwise the next leader
     // can run ahead of us and link to memtable writer queue before we do.
     if (write_group.size > 0) {
+      // LinkGroup 把当前组链接到 memtable 写队列 newest_memtable_writer_ 上
       if (LinkGroup(write_group, &newest_memtable_writer_)) {
         // The leader can now be different from current writer.
+        // 当前 leader 变为 STATE_MEMTABLE_WRITER_LEADER，等待后续 memtable 写完成
         SetState(write_group.leader, STATE_MEMTABLE_WRITER_LEADER);
       }
     }
@@ -672,8 +718,8 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
     if (has_dummy) {
       assert(next_leader == nullptr);
       expected = &dummy;
-      bool has_pending_writer =
-          !newest_writer_.compare_exchange_strong(expected, nullptr);
+      // 是否有新插入的 writer 节点, 如果有, 就选出新的 leader;
+      bool has_pending_writer = !newest_writer_.compare_exchange_strong(expected, nullptr);
       if (has_pending_writer) {
         next_leader = FindNextLeader(expected, &dummy);
         assert(next_leader != nullptr && next_leader != &dummy);
@@ -684,13 +730,17 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
       next_leader->link_older = nullptr;
       SetState(next_leader, STATE_GROUP_LEADER);
     }
-    AwaitState(leader, STATE_MEMTABLE_WRITER_LEADER |
-                           STATE_PARALLEL_MEMTABLE_WRITER | STATE_COMPLETED,
+    // 轮到它当 memtable 写队列的 leader，去写 memtable;
+    // 它被允许并行写 memtable（某些优化场景）
+    // 整个写入完成
+    AwaitState(leader, STATE_MEMTABLE_WRITER_LEADER | STATE_PARALLEL_MEMTABLE_WRITER | STATE_COMPLETED,
                &eabgl_ctx);
   } else {
+    // 再次尝试获得 最新 newest_writer_ 节点;
     Writer* head = newest_writer_.load(std::memory_order_acquire);
-    if (head != last_writer ||
-        !newest_writer_.compare_exchange_strong(head, nullptr)) {
+    // head != last_writer: 说明之后有新节点插入;
+    // cas 失败: 说明在读取和 CAS 之间有人加入了新 writer;
+    if (head != last_writer || !newest_writer_.compare_exchange_strong(head, nullptr)) {
       // Either w wasn't the head during the load(), or it was the head
       // during the load() but somebody else pushed onto the list before
       // we did the compare_exchange_strong (causing it to fail).  In the
@@ -707,25 +757,33 @@ void WriteThread::ExitAsBatchGroupLeader(WriteGroup& write_group,
       // could cause the next leader to start their work without a call
       // to MarkJoined, so we can definitely conclude that no other leader
       // work is going on here (with or without db mutex).
+      // newest_writer_ 从后往前进行 链接 link_newer;
+      // 所有缺失的 link_newer 都被补上，链表变成完整的双向链表;
       CreateMissingNewerLinks(head);
+
       assert(last_writer->link_newer->link_older == last_writer);
+      
+      // 断开链接;
       last_writer->link_newer->link_older = nullptr;
 
       // Next leader didn't self-identify, because newest_writer_ wasn't
       // nullptr when they enqueued (we were definitely enqueued before them
       // and are still in the list).  That means leader handoff occurs when
-      // we call MarkJoined
+      // we call MarkJoined; 新leader 选举成功;
       SetState(last_writer->link_newer, STATE_GROUP_LEADER);
     }
+
     // else nobody else was waiting, although there might already be a new
     // leader now
 
+    // 从往前设置 状态为 STATE_COMPLETED, 直到 leader 节点;
     while (last_writer != leader) {
       last_writer->status = status;
       // we need to read link_older before calling SetState, because as soon
       // as it is marked committed the other thread's Await may return and
       // deallocate the Writer.
       auto next = last_writer->link_older;
+      // 逐个唤醒;
       SetState(last_writer, STATE_COMPLETED);
 
       last_writer = next;

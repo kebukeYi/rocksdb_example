@@ -368,7 +368,9 @@ class WriteBatch : public WriteBatchBase {
   bool is_latest_persistent_state_ = false;
 
  protected:
+  // 
   std::string rep_;  // See comment in write_batch.cc for the format of rep_
+  // 
   const size_t timestamp_size_;
 
   // Intentionally copyable

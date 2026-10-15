@@ -53,8 +53,7 @@ Status Writer::AddRecord(const Slice& slice) {
   size_t left = slice.size();
 
   // Header size varies depending on whether we are recycling or not.
-  const int header_size =
-      recycle_log_files_ ? kRecyclableHeaderSize : kHeaderSize;
+  const int header_size = recycle_log_files_ ? kRecyclableHeaderSize : kHeaderSize;
 
   // Fragment the record if necessary and emit it.  Note that if slice
   // is empty, we still want to iterate once to emit a single
@@ -96,7 +95,7 @@ Status Writer::AddRecord(const Slice& slice) {
     } else {
       type = recycle_log_files_ ? kRecyclableMiddleType : kMiddleType;
     }
-
+    // 物理塞入;
     s = EmitPhysicalRecord(type, ptr, fragment_length);
     ptr += fragment_length;
     left -= fragment_length;
@@ -147,11 +146,14 @@ Status Writer::EmitPhysicalRecord(RecordType t, const char* ptr, size_t n) {
   // Compute the crc of the record type and the payload.
   crc = crc32c::Extend(crc, ptr, n);
   crc = crc32c::Mask(crc);  // Adjust for storage
+  
+  // 将crc 编入 buf中;
   EncodeFixed32(buf, crc);
 
   // Write the header and the payload
   Status s = dest_->Append(Slice(buf, header_size));
   if (s.ok()) {
+    // 编入 wal的buffer中;
     s = dest_->Append(Slice(ptr, n));
   }
   block_offset_ += header_size + n;

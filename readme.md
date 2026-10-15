@@ -22,3 +22,16 @@ make
 设置 C++代码风格: 花括号{不换行, 缩进4;
 "C_Cpp.clang_format_style": "{ BasedOnStyle: LLVM, IndentWidth: 4, UseTab: Never, BreakBeforeBraces: Attach }"
 
+
+使用 rocksdb自带的 ldb 工具来查看 wal 文件格式和内容;
+cd rocksdb
+make ldb
+
+./ldb dump_wal --walfile=../data/00003.log --header --print_value
+
+./ldb manifest_dump --path="../data/MANIFEST-000005"
+
+make sst_dump
+./sst_dump --file=../data/sst_file.sst --command=raw
+
+

@@ -113,6 +113,7 @@ class WriteThread {
 
   // Information kept for every waiting writer.
   struct Writer {
+    // 1对1; 
     WriteBatch* batch;
     bool sync;
     bool no_slowdown;
@@ -369,8 +370,8 @@ class WriteThread {
   // elements, adding can be done lock-free by anybody.
   std::atomic<Writer*> newest_writer_;
 
-  // Points to the newest pending memtable writer. Used only when pipelined
-  // write is enabled.
+  // Points to the newest pending memtable writer. 
+  // Used only when pipelined write is enabled.
   std::atomic<Writer*> newest_memtable_writer_;
 
   // The last sequence that have been consumed by a writer. The sequence

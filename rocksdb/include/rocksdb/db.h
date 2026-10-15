@@ -314,6 +314,7 @@ class DB {
                      const Slice& value) = 0;
   virtual Status Put(const WriteOptions& options, const Slice& key,
                      const Slice& value) {
+    // DefaultColumnFamily(): 
     return Put(options, DefaultColumnFamily(), key, value);
   }
 

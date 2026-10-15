@@ -733,6 +733,7 @@ void WriteBatchInternal::SetAsLastestPersistentState(WriteBatch* b) {
 }
 
 uint32_t WriteBatchInternal::Count(const WriteBatch* b) {
+  // 偏移8字节后, 读取4字节的count值;
   return DecodeFixed32(b->rep_.data() + 8);
 }
 
@@ -762,6 +763,7 @@ Status WriteBatchInternal::Put(WriteBatch* b, uint32_t column_family_id,
   }
 
   LocalSavePoint save(b);
+  // 从 8 字节开始写入4字节的count值, 代表当前batch中操作的数量;
   WriteBatchInternal::SetCount(b, WriteBatchInternal::Count(b) + 1);
   if (column_family_id == 0) {
     b->rep_.push_back(static_cast<char>(kTypeValue));
@@ -769,25 +771,28 @@ Status WriteBatchInternal::Put(WriteBatch* b, uint32_t column_family_id,
     b->rep_.push_back(static_cast<char>(kTypeColumnFamilyValue));
     PutVarint32(&b->rep_, column_family_id);
   }
+  // 
   if (0 == b->timestamp_size_) {
     PutLengthPrefixedSlice(&b->rep_, key);
   } else {
-    PutVarint32(&b->rep_,
-                static_cast<uint32_t>(key.size() + b->timestamp_size_));
+    // 
+    PutVarint32(&b->rep_, static_cast<uint32_t>(key.size() + b->timestamp_size_));
     b->rep_.append(key.data(), key.size());
     b->rep_.append(b->timestamp_size_, '\0');
   }
+
   PutLengthPrefixedSlice(&b->rep_, value);
   b->content_flags_.store(
       b->content_flags_.load(std::memory_order_relaxed) | ContentFlags::HAS_PUT,
       std::memory_order_relaxed);
+      // 
   return save.commit();
 }
 
 Status WriteBatch::Put(ColumnFamilyHandle* column_family, const Slice& key,
                        const Slice& value) {
-  return WriteBatchInternal::Put(this, GetColumnFamilyID(column_family), key,
-                                 value);
+
+  return WriteBatchInternal::Put(this, GetColumnFamilyID(column_family), key,value);
 }
 
 Status WriteBatchInternal::CheckSlicePartsLength(const SliceParts& key,
@@ -1970,11 +1975,13 @@ Status WriteBatchInternal::InsertInto(
     TrimHistoryScheduler* trim_history_scheduler,
     bool ignore_missing_column_families, uint64_t recovery_log_number, DB* db,
     bool concurrent_memtable_writes, bool seq_per_batch, bool batch_per_txn) {
+  // 
   MemTableInserter inserter(
       sequence, memtables, flush_scheduler, trim_history_scheduler,
       ignore_missing_column_families, recovery_log_number, db,
       concurrent_memtable_writes, nullptr /*has_valid_writes*/, seq_per_batch,
       batch_per_txn);
+    
   for (auto w : write_group) {
     if (w->CallbackFailed()) {
       continue;

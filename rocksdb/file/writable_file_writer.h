@@ -52,9 +52,10 @@ class WritableFileWriter {
   void CalculateFileChecksum(const Slice& data);
 
   std::unique_ptr<FSWritableFile> writable_file_;
+  // wal 文件名字;
   std::string file_name_;
   Env* env_;
-  AlignedBuffer buf_;
+  AlignedBuffer buf_; // 内存对齐 buffer;
   size_t max_buffer_size_;
   // Actually written data size can be used for truncate
   // not counting padding data
@@ -65,6 +66,7 @@ class WritableFileWriter {
   // so we need to go back and write that page again
   uint64_t next_write_offset_;
 #endif  // ROCKSDB_LITE
+  // 
   bool pending_sync_;
   uint64_t last_sync_size_;
   uint64_t bytes_per_sync_;
@@ -105,9 +107,7 @@ class WritableFileWriter {
 #ifndef ROCKSDB_LITE
     std::for_each(listeners.begin(), listeners.end(),
                   [this](const std::shared_ptr<EventListener>& e) {
-                    if (e->ShouldBeNotifiedOnFileIO()) {
-                      listeners_.emplace_back(e);
-                    }
+                    if (e->ShouldBeNotifiedOnFileIO()) {listeners_.emplace_back(e);}
                   });
 #else  // !ROCKSDB_LITE
     (void)listeners;

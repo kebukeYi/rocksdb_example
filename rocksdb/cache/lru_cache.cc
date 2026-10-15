@@ -368,8 +368,7 @@ Status LRUCacheShard::Insert(const Slice& key, uint32_t hash, void* value,
     // is freed or the lru list is empty
     EvictFromLRU(total_charge, &last_reference_list);
 
-    if ((usage_ + total_charge) > capacity_ &&
-        (strict_capacity_limit_ || handle == nullptr)) {
+    if ((usage_ + total_charge) > capacity_ && (strict_capacity_limit_ || handle == nullptr)) {
       if (handle == nullptr) {
         // Don't insert the entry but still return ok, as if the entry inserted
         // into cache and get evicted immediately.
@@ -398,6 +397,7 @@ Status LRUCacheShard::Insert(const Slice& key, uint32_t hash, void* value,
           last_reference_list.push_back(old);
         }
       }
+      // 
       if (handle == nullptr) {
         LRU_Insert(e);
       } else {
@@ -556,6 +556,7 @@ std::shared_ptr<Cache> NewLRUCache(
     double high_pri_pool_ratio,
     std::shared_ptr<MemoryAllocator> memory_allocator, bool use_adaptive_mutex,
     CacheMetadataChargePolicy metadata_charge_policy) {
+      // 
   if (num_shard_bits >= 20) {
     return nullptr;  // the cache cannot be sharded into too many fine pieces
   }
@@ -563,9 +564,11 @@ std::shared_ptr<Cache> NewLRUCache(
     // invalid high_pri_pool_ratio
     return nullptr;
   }
+  // 
   if (num_shard_bits < 0) {
     num_shard_bits = GetDefaultCacheShardBits(capacity);
   }
+  // 
   return std::make_shared<LRUCache>(
       capacity, num_shard_bits, strict_capacity_limit, high_pri_pool_ratio,
       std::move(memory_allocator), use_adaptive_mutex, metadata_charge_policy);

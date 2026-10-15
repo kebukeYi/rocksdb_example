@@ -241,6 +241,7 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
   co.capacity = table_cache_size;
   co.num_shard_bits = immutable_db_options_.table_cache_numshardbits;
   co.metadata_charge_policy = kDontChargeCacheMetadata;
+  // todo LRU缓存;
   table_cache_ = NewLRUCache(co);
 
   versions_.reset(new VersionSet(dbname_, &immutable_db_options_, file_options_,
